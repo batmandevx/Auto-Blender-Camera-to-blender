@@ -91,7 +91,7 @@ Reply with ONLY a JSON object:
 def identify(image_bytes: bytes) -> dict:
     res = _ollama("/api/generate", {
         "model": LLM_MODEL, "prompt": IDENTIFY_PROMPT, "images": [base64.b64encode(image_bytes).decode()],
-        "format": "json", "stream": False, "options": {"temperature": 0.3},
+        "format": "json", "stream": False, "options": {"temperature": 0.3}, "keep_alive": 0,
     }, timeout=180)
     info = _parse_json(res.get("response", "{}"))
     cat = info.get("category", "object")

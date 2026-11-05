@@ -116,9 +116,13 @@ def _hunyuan(kind: str, set_stage: Callable):
     if kind in _pipes:
         return _pipes[kind]
     _free(keep=kind)
+    _unload_chat_model()   # the local chat AI (Ollama) holds ~3 GB; the 3D model needs it more
+    low = _available_gb() < 6
+    if low:
+        _free(keep=None)   # make room: drop every loaded model first
     repo, sub, vae_repo, vae_sub = HY_MODELS[kind]
     set_stage(3, "Downloading Hunyuan3D model (first run only)…" if not (HY_CACHE / repo / sub / "model.fp16.safetensors").exists()
-              else "Loading Hunyuan3D model…")
+              else ("Loading Hunyuan3D model (low memory, close other apps)…" if low else "Loading Hunyuan3D model…"))
     _fetch(repo, sub)
     _fetch(vae_repo, vae_sub)
     from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
@@ -211,6 +215,10 @@ def _run(job: dict) -> None:
     from texture_project import project_texture
 
     def set_stage(p, msg):
+        if job.get("abandoned"):
+            raise RuntimeError("job was stopped by the watchdog")
+        if msg != job.get("stage"):
+            job["stage_at"] = time.time()
         job.update(progress=int(p), stage=msg)
 
     out_dir: pathlib.Path = job["out_dir"]
@@ -237,6 +245,9 @@ def _run(job: dict) -> None:
 
     set_stage(55, "Cleaning up the mesh…")
     mesh = _cleanup(trimesh.Trimesh(raw.vertices, raw.faces, process=True), q["faces"])
+    if job.get("smooth"):
+        # Light Taubin smoothing: removes the faceted/blocky look without shrinking the model.
+        trimesh.smoothing.filter_taubin(mesh, lamb=0.5, nu=-0.53, iterations=int(job["smooth"]))
     _export_plain(mesh, out_dir / "preview.glb")
     job["preview_url"] = f"/scans-files/{out_dir.name}/preview.glb"
     job["events"].append({"type": "preview", "url": job["preview_url"]})
@@ -261,30 +272,105 @@ def _run(job: dict) -> None:
           f"({job['result']['faces']} faces, {job['engine']}/{job['quality']})")
 
 
+def _unload_chat_model() -> None:
+    """Ask Ollama to drop any loaded model from memory (it reloads by itself on the next chat)."""
+    import json as _json
+    import urllib.request
+    base = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+    try:
+        with urllib.request.urlopen(f"{base}/api/ps", timeout=2) as r:
+            loaded = [m["name"] for m in _json.loads(r.read()).get("models", [])]
+        for name in loaded:
+            req = urllib.request.Request(f"{base}/api/generate", data=_json.dumps({"model": name, "keep_alive": 0}).encode(),
+                                         headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=10).read()
+            print(f"[Local3D] Unloaded chat model {name} to free memory")
+    except Exception:
+        pass
+
+
+def _available_gb() -> float:
+    try:
+        import psutil
+        return psutil.virtual_memory().available / 1e9
+    except Exception:
+        return 99.0
+
+
+def _finish(job: dict) -> None:
+    if job.get("finished"):
+        return
+    job["finished"] = True
+    job["views"] = {}
+    if job.get("on_done"):
+        try:
+            job["on_done"](job)
+        except Exception:
+            traceback.print_exc()
+
+
 def _work() -> None:
+    me = threading.current_thread()
     while True:
         job_id = _queue.get()
         job = jobs[job_id]
-        job["status"] = "running"
+        job.update(status="running", stage_at=time.time(), worker=me.name)
         try:
             _run(job)
-            job.update(status="success", progress=100, stage="Done")
+            if not job.get("abandoned"):
+                job.update(status="success", progress=100, stage="Done")
         except Exception as e:
-            traceback.print_exc()
-            job.update(status="failed", error=f"{type(e).__name__}: {e}"[:400])
+            if not job.get("abandoned"):
+                traceback.print_exc()
+                job.update(status="failed", error=f"{type(e).__name__}: {e}"[:400])
         finally:
-            job["views"] = {}
-            if job.get("on_done"):
-                try:
-                    job["on_done"](job)
-                except Exception:
-                    traceback.print_exc()
+            if not job.get("abandoned"):
+                _finish(job)
+                # The big models (4-view, Ultra) take ~5 GB each: don't keep them around between jobs.
+                if any(k in _pipes for k in ("multi", "full")) and _queue.empty():
+                    _free(keep=None)
             _queue.task_done()
+        if job.get("abandoned"):
+            return   # a replacement worker has already taken over
+
+
+# How long one step may take before we call it stuck (seconds).
+STAGE_LIMITS = {"Loading": 300, "Downloading": 3600, "Sculpting": 900}
+DEFAULT_LIMIT = 900
+
+
+def _watchdog() -> None:
+    global _worker
+    while True:
+        time.sleep(10)
+        for job in list(jobs.values()):
+            if job["status"] != "running" or job.get("abandoned"):
+                continue
+            stage = job.get("stage") or ""
+            limit = next((v for k, v in STAGE_LIMITS.items() if stage.startswith(k)), DEFAULT_LIMIT)
+            stuck = time.time() - job.get("stage_at", time.time())
+            if stuck < limit:
+                continue
+            mins = int(stuck // 60)
+            print(f"[Local3D] Watchdog: job {job['id']} stuck on '{stage}' for {mins} min; giving up "
+                  f"({_available_gb():.1f} GB RAM free)")
+            job.update(status="failed", abandoned=True,
+                       error=f"Stuck on \"{stage.rstrip('…')}\" for {mins} min. Your Mac is probably low on memory: "
+                             "close big apps (browsers, IDEs) and try again, or use Draft/Standard quality.")
+            _finish(job)
+            _pipes.clear()
+            # The stuck thread may never come back: start a fresh worker for the rest of the queue.
+            _worker = threading.Thread(target=_work, daemon=True, name=f"worker-{uuid.uuid4().hex[:4]}")
+            _worker.start()
+
+
+_dog = threading.Thread(target=_watchdog, daemon=True, name="watchdog")
+_dog.start()
 
 
 def start(views: Dict[str, bytes], out_dir: pathlib.Path, *, engine: str = "hunyuan", quality: str = "standard",
           texture: bool = True, faces: Optional[int] = None, texture_size: Optional[int] = None,
-          seed: int = 1234, refine: bool = False, out_name: str = "final.glb",
+          seed: int = 1234, refine: bool = False, out_name: str = "final.glb", smooth: int = 0,
           on_done: Optional[Callable] = None) -> str:
     global _worker
     if _worker is None or not _worker.is_alive():
@@ -295,7 +381,7 @@ def start(views: Dict[str, bytes], out_dir: pathlib.Path, *, engine: str = "huny
         "id": job_id, "status": "queued", "progress": 0, "stage": "Waiting in queue…", "error": None,
         "views": views, "out_dir": out_dir, "engine": engine, "quality": quality, "texture": texture,
         "faces": faces, "texture_size": texture_size, "seed": seed, "refine": refine,
-        "out_name": out_name, "on_done": on_done, "events": [], "result": None, "created": time.time(),
+        "out_name": out_name, "on_done": on_done, "smooth": smooth, "events": [], "result": None, "created": time.time(),
     }
     _queue.put(job_id)
     return job_id

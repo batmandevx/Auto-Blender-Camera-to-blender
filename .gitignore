@@ -27,3 +27,4 @@ models/
 
 # Blender add-on bytecode
 blender_addon/__pycache__/
+logs/

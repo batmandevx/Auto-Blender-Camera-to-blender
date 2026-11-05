@@ -113,6 +113,7 @@ class EditPayload(BaseModel):
 
 
 class RefinePayload(BaseModel):
+    smooth: int = 0
     quality: Optional[str] = None
     faces: Optional[int] = None
     texture_size: Optional[int] = None
@@ -471,6 +472,7 @@ async def refine_scan(scan_id: str, payload: RefinePayload):
     job_id = local3d.start(_saved_views(scan_id), _scan_dir(scan_id), engine=meta.get("engine", "hunyuan"),
                            quality=quality, texture=payload.texture, faces=payload.faces,
                            texture_size=payload.texture_size, refine=True, out_name=out_name,
+                           smooth=max(0, min(payload.smooth, 20)),
                            on_done=_on_done(scan_id))
     return {"scan_id": scan_id, "job_id": job_id}
 

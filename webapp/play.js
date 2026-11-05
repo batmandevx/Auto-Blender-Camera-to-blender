@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 
 const API = location.origin;
 const $ = (id) => document.getElementById(id);
@@ -46,15 +47,34 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true 
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.NeutralToneMapping;
-renderer.toneMappingExposure = 1.15;
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.01, 60);
 camera.position.set(0.55, 0.42, 0.85);
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x4a4a55, 2.6));
-const sun = new THREE.DirectionalLight(0xffffff, 1.8);
-sun.position.set(1, 3, 2);
+// Studio lighting: an HDR light map for soft, realistic reflections and fill,
+// plus one key light that casts real soft shadows.
+const hemi = new THREE.HemisphereLight(0xffffff, 0x4a4a55, 0.6);
+scene.add(hemi);
+const pmrem = new THREE.PMREMGenerator(renderer);
+new RGBELoader().load(`${location.origin}/vendor/hdri/studio_small_08_1k.hdr`, (hdr) => {
+  scene.environment = pmrem.fromEquirectangular(hdr).texture;
+  scene.environmentIntensity = 0.9;
+  hdr.dispose();
+}, undefined, () => { hemi.intensity = 2.4; });   // no HDR? fall back to the old flat light
+const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+sun.position.set(1.2, 3, 1.6);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.radius = 6;
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.02;
+const sc = sun.shadow.camera;
+sc.left = -1.2; sc.right = 1.2; sc.top = 1.2; sc.bottom = -1.2; sc.near = 0.1; sc.far = 10;
+scene.add(sun.target);
 scene.add(sun);
 
 // root: where it stands + which way it faces + size
@@ -84,6 +104,11 @@ function makeShadow() {
 }
 const shadow = makeShadow();
 scene.add(shadow);
+// Invisible floor that only shows the real cast shadow (works over the camera feed in AR too).
+const shadowCatcher = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), new THREE.ShadowMaterial({ opacity: 0.32 }));
+shadowCatcher.rotation.x = -Math.PI / 2;
+shadowCatcher.receiveShadow = true;
+scene.add(shadowCatcher);
 
 const floor = new THREE.Group();
 const floorDisc = new THREE.Mesh(new THREE.CircleGeometry(3, 64), new THREE.MeshStandardMaterial({ color: 0x121217, roughness: 1 }));
@@ -225,7 +250,19 @@ async function loadScan() {
 
   const gltf = await new GLTFLoader().loadAsync(`${API}${scan.model_url}?v=${scan.updated || 0}`);
   const model = gltf.scene;
-  model.traverse(o => { if (o.isMesh) o.frustumCulled = false; });
+  model.traverse(o => {
+    if (!o.isMesh) return;
+    o.frustumCulled = false;
+    o.castShadow = true;
+    o.receiveShadow = true;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    mats.forEach(m => {
+      if (!m) return;
+      if (m.aoMap) m.aoMapIntensity = 1.0;       // baked soft shadows in creases
+      m.envMapIntensity = 0.9;
+      if (m.map) m.map.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    });
+  });
   const box = new THREE.Box3().setFromObject(model);
   modelSize = box.getSize(new THREE.Vector3());
   const c = box.getCenter(new THREE.Vector3());
@@ -440,8 +477,17 @@ function update(dt, t) {
   const w = Math.max(modelSize.x, modelSize.z) * 1.5 * baseScale * userScale;
   const lift = Math.min(Math.max((root.position.y - floorY) + anim.position.y * baseScale * userScale, 0) / Math.max(hM, 0.05), 1);
   shadow.position.set(root.position.x, floorY + 0.002, root.position.z);
+  // Real shadow: floor catcher + key light follow the model and scale with its size.
+  shadowCatcher.position.set(root.position.x, floorY + 0.001, root.position.z);
+  const span = Math.max(hM * 2.2, 0.4);
+  sun.target.position.copy(root.position);
+  sun.position.set(root.position.x + span * 0.9, root.position.y + span * 2.2, root.position.z + span * 1.2);
+  if (Math.abs(sc.right - span) > 1e-3) {
+    sc.left = -span; sc.right = span; sc.top = span; sc.bottom = -span; sc.far = span * 8;
+    sc.updateProjectionMatrix();
+  }
   shadow.scale.set(w * (1 - 0.4 * lift), w * (1 - 0.4 * lift), 1);
-  shadow.material.opacity = 1 - 0.75 * lift;
+  shadow.material.opacity = (1 - 0.75 * lift) * 0.55;   // subtle contact shadow under the real one
 
   updateEffects(dt);
   updateSpeechBubble();

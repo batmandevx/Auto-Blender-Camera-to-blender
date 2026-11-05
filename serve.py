@@ -22,6 +22,42 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ── Log to logs/server.log as well as the terminal ──────────────────────────
+LOG_DIR = pathlib.Path(__file__).parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+LOG_FILE = LOG_DIR / "server.log"
+if LOG_FILE.exists() and LOG_FILE.stat().st_size > 5_000_000:
+    LOG_FILE.replace(LOG_DIR / "server.old.log")
+_log = open(LOG_FILE, "a", buffering=1)
+
+
+class _Tee:
+    def __init__(self, stream):
+        self.stream = stream
+
+    def write(self, data):
+        self.stream.write(data)
+        _log.write(data)
+        return len(data)
+
+    def flush(self):
+        self.stream.flush()
+        _log.flush()
+
+    def isatty(self):
+        return getattr(self.stream, "isatty", lambda: False)()
+
+    def fileno(self):
+        return self.stream.fileno()
+
+
+sys.stdout, sys.stderr = _Tee(sys.stdout), _Tee(sys.stderr)
+
+# `kill -USR1 <pid>` writes every thread's stack to the log: handy if a job ever hangs.
+import faulthandler
+faulthandler.register(signal.SIGUSR1, file=_log, all_threads=True)
+print(f"\n===== server start {__import__('time').strftime('%Y-%m-%d %H:%M:%S')} (pid {os.getpid()}) =====")
+
 ROOT = pathlib.Path(__file__).parent
 CERT_DIR = ROOT / "certs"
 HTTP_PORT = int(os.getenv("PORT", "8000"))
