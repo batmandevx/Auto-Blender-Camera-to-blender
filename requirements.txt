@@ -1,0 +1,33 @@
+# Server
+fastapi==0.110.0
+uvicorn[standard]==0.29.0
+websockets==12.0
+python-dotenv==1.0.1
+python-multipart==0.0.9
+
+# Cut-outs (automatic + tap-to-select)
+rembg[cpu]==2.0.86
+scipy==1.18.1
+
+# Local 3D generation, texturing, AR export (Apple Silicon / MPS)
+torch==2.15.0
+torchvision==0.29.2
+diffusers==0.31.0
+transformers==4.46.3
+huggingface-hub==0.36.2
+accelerate==1.15.0
+omegaconf==2.3.0
+einops==0.7.0
+trimesh==5.2.0
+pymeshlab==2025.7.post1
+xatlas==0.0.11
+opencv-python-headless==5.0.0.93
+scikit-image==0.26.0
+pygltflib==1.16.5
+usd-core==26.11
+safetensors==0.8.0
+
+# Local AI voice (speech-to-text on Apple MLX, text-to-speech)
+mlx-whisper==0.4.3
+kokoro-onnx==0.6.1
+soundfile==0.14.0

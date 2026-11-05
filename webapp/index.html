@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Camera to 3D</title>
+  <meta name="theme-color" content="#07070a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="app.css">
+  <script type="importmap">
+    { "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/"
+    }}
+  </script>
+  <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.1.0/model-viewer.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+  <div class="app" id="appContainer" data-mode="photo" data-stage="idle">
+
+    <!-- ── Top bar ── -->
+    <header class="appbar">
+      <div class="brand"><span class="logo">◆</span><span>Camera&nbsp;to&nbsp;3D</span></div>
+      <nav class="segmented" id="modeBar" role="tablist">
+        <button class="mode-tab is-active" data-mode="photo" role="tab">Photo</button>
+        <button class="mode-tab" data-mode="multiview" role="tab">4-View</button>
+        <button class="mode-tab" data-mode="gallery" role="tab">Gallery</button>
+      </nav>
+      <div class="status-pill" id="infoBtn" title="Blender connection">
+        <span class="connection-status" id="connectionStatus"></span>
+        <span id="tooltip">Blender: Disconnected</span>
+      </div>
+    </header>
+
+    <!-- ── Viewport ── -->
+    <main class="viewport">
+      <div class="preview-area">
+        <video id="camera" autoplay playsinline></video>
+        <canvas id="snapshot" style="display:none;"></canvas>
+        <img id="previewBg" class="preview-bg" style="display:none;" alt="">
+        <img id="preview" style="display:none;" alt="Captured preview">
+        <div id="tapMarkers" class="tap-markers"></div>
+
+        <div id="placeholder" class="placeholder">
+          <div class="placeholder-content">
+            <div class="placeholder-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8a2 2 0 0 1 2-2h2l2-2h6l2 2h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="4"/></svg>
+            </div>
+            <span class="placeholder-title">Tap to start the camera</span>
+            <span class="placeholder-sub">or upload a photo. Everything is processed on your own computer</span>
+            <ol class="steps">
+              <li><b>1</b>Snap an object</li>
+              <li><b>2</b>Tap it to select</li>
+              <li><b>3</b>Get a 3D model</li>
+            </ol>
+          </div>
+        </div>
+
+        <div class="model-viewer-layer" id="modelViewerContainer" style="display:none;">
+          <canvas id="pointCloudCanvas"></canvas>
+          <model-viewer id="modelViewer" alt="Generated 3D model" camera-controls touch-action="pan-y" auto-rotate autoplay
+            min-camera-orbit="auto 0deg auto" max-camera-orbit="auto 180deg auto" interaction-prompt="none"
+            shadow-intensity="1" exposure="1.05" environment-image="neutral" style="width: 100%; height: 100%; opacity: 0;">
+          </model-viewer>
+          <div id="pointCloudStatus" class="point-cloud-status" style="display:none;"><span id="pointCloudStatusText">Generating...</span></div>
+          <div id="modelStatusBadge" class="model-status-badge" style="display:none;"><span id="modelStatusText">Preview</span></div>
+        </div>
+        <canvas id="dotRippleCanvas" class="dot-ripple-canvas" style="display:none;"></canvas>
+
+        <!-- Processing settings -->
+        <div class="settings-bar" id="settingsBar">
+          <button class="settings-summary" id="settingsSummary" type="button" aria-expanded="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+            <span id="settingsSummaryText">Hunyuan · Standard · Texture</span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <div class="settings-options" id="settingsOptions">
+          <div class="opt-label">Quality</div>
+          <div class="segmented small" role="group" aria-label="Quality">
+            <button data-quality="draft" type="button" title="~20k faces, 1K texture">Draft</button>
+            <button data-quality="standard" type="button" title="~60k faces, 2K texture">Standard</button>
+            <button data-quality="high" type="button" title="~150k faces, 2K texture">High</button>
+            <button data-quality="ultra" type="button" title="Full-size model, ~250k faces, 4K texture">Ultra</button>
+          </div>
+          <button class="btn small toggle is-on" id="textureToggle" type="button" title="Paint your photo onto the model">Texture ✓</button>
+          <p class="opt-note" id="etaNote">About 45 s on your Mac</p>
+          </div>
+        </div>
+
+        <!-- Tap-to-select -->
+        <div class="select-bar" id="selectBar">
+          <div class="select-hint" id="selectHint">Tap the object to select it</div>
+          <div class="segmented small">
+            <button class="is-active" id="selKeep" type="button">＋ Keep</button>
+            <button id="selRemove" type="button">－ Remove</button>
+            <button id="selAuto" type="button">✨ Auto</button>
+          </div>
+        </div>
+
+        <!-- 4-view capture -->
+        <div class="mv-panel" id="mvPanel">
+          <div class="mv-hint" id="mvHint">Shoot the FRONT of the object</div>
+          <div class="mv-strip" id="mvStrip">
+            <div class="mv-slot" data-view="front"><span>Front</span></div>
+            <div class="mv-slot" data-view="left"><span>Left</span></div>
+            <div class="mv-slot" data-view="back"><span>Back</span></div>
+            <div class="mv-slot" data-view="right"><span>Right</span></div>
+          </div>
+          <div class="mv-actions">
+            <button class="btn small" id="mvReset" type="button">Reset</button>
+            <button class="btn small primary" id="mvGenerate" type="button" disabled>Generate 3D</button>
+          </div>
+        </div>
+
+        <!-- Gallery -->
+        <div class="gallery-panel" id="galleryPanel">
+          <div class="gallery-head">
+            <div><h2>Your scans</h2><p class="muted">Saved on this Mac</p></div>
+            <button class="btn small" id="phoneLinkBtn" type="button">📱 Open on phone</button>
+          </div>
+          <div class="phone-link" id="phoneLink" style="display:none;">
+            <div id="phoneQr" class="phone-qr"></div>
+            <div class="phone-link-text"><span id="phoneUrl"></span><small>Same Wi-Fi. Accept the certificate warning once.</small></div>
+          </div>
+          <div class="gallery-grid" id="galleryGrid"></div>
+          <div class="gallery-empty" id="galleryEmpty">No scans yet. Take a photo to make your first one.</div>
+        </div>
+
+        <div class="model-info" id="modelInfo"></div>
+      </div>
+    </main>
+
+    <!-- ── Bottom dock ── -->
+    <section class="dock-area">
+      <div class="controls-main" id="controlsMain">
+        <!-- Idle: shutter -->
+        <div class="shutter-row">
+          <button class="side-btn upload-btn" id="uploadBtn" type="button" aria-label="Upload photos" title="Use photos from your device (or drag them in)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg>
+          </button>
+          <input type="file" id="fileInput" accept="image/*" multiple hidden>
+          <button id="capture" class="shutter-button" aria-label="Capture photo"><span></span></button>
+          <button id="flipBtn" class="side-btn flip-btn" aria-label="Flip camera">
+            <svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3"/><path d="M18 3v4h-4M6 21v-4h4"/></svg>
+          </button>
+        </div>
+
+        <!-- Cutting out -->
+        <div class="progress-card isolate-controls" id="isolateControls">
+          <div class="progress-top"><span class="isolate-label" id="isolateLabel">Processing…</span>
+            <button id="isolateCancelBtn" class="icon-btn small-x" type="button" aria-label="Cancel"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+          <div class="segments-track" id="segmentsTrack"></div>
+        </div>
+
+        <!-- Generating -->
+        <div class="progress-card generation-controls" id="generationControls">
+          <div class="progress-top"><span class="isolate-label" id="generationLabel">Generating…</span>
+            <button id="cancelGenerationBtn" class="icon-btn small-x" type="button" aria-label="Cancel generation"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+          <div class="segments-track" id="generationSegmentsTrack"></div>
+          <p class="muted">Running on your Mac's GPU. Nothing is uploaded.</p>
+        </div>
+
+        <!-- Review -->
+        <div class="review-controls" id="reviewControls">
+          <button id="retakeBtn" class="btn" type="button">↺ Retake</button>
+          <button id="confirmBtn" class="btn primary grow" type="button"><span id="confirmLabel">Generate</span></button>
+        </div>
+
+        <!-- Model ready: tools sheet -->
+        <div class="model-ready-controls" id="modelReadyControls">
+          <div class="sheet-tabs segmented small" id="sheetTabs">
+            <button class="is-active" data-tab="overview" type="button">Model</button>
+            <button data-tab="edit" type="button">Edit</button>
+            <button data-tab="blender" type="button">Blender</button>
+            <button data-tab="export" type="button">Export</button>
+          </div>
+
+          <div class="tab-panel is-active" data-panel="overview">
+            <div class="tools-bar" id="toolsBar">
+              <button class="btn primary chip" id="toolAR" type="button">▶ Play · AR · Talk</button>
+              <select class="select chip" id="toolDetail" aria-label="Detail">
+                <option value="">Detail…</option>
+                <option value="20000">Light · 20K</option>
+                <option value="60000">Standard · 60K</option>
+                <option value="150000">Dense · 150K</option>
+                <option value="250000">Ultra · 250K</option>
+                <option value="notex">No texture</option>
+              </select>
+              <button class="btn chip" id="toolVariation" type="button" title="Same photos, different take">🎲 Variation</button>
+              <button class="btn chip" id="toolRename" type="button" title="Rename">✎ Rename</button>
+            </div>
+            <div class="row-actions">
+              <button id="startAgainBtn" class="btn" type="button">＋ New scan</button>
+              <button id="sendToBlender" class="btn primary grow" type="button" disabled>Send to Blender</button>
+            </div>
+          </div>
+
+          <div class="tab-panel" data-panel="edit">
+            <div class="edit-grid">
+              <div class="edit-group">
+                <span class="label">Rotate</span>
+                <div class="row">
+                  <button class="btn small" data-rot="90,0,0" type="button">X 90°</button>
+                  <button class="btn small" data-rot="0,90,0" type="button">Y 90°</button>
+                  <button class="btn small" data-rot="0,0,90" type="button">Z 90°</button>
+                  <button class="btn small" id="editMirror" type="button">⇋ Mirror</button>
+                </div>
+              </div>
+              <label class="field">Brightness <input type="range" id="edBright" min="0.5" max="1.6" step="0.02" value="1"></label>
+              <label class="field">Contrast <input type="range" id="edContrast" min="0.5" max="1.6" step="0.02" value="1"></label>
+              <label class="field">Saturation <input type="range" id="edSat" min="0" max="2" step="0.02" value="1"></label>
+              <label class="field">Hue shift <input type="range" id="edHue" min="-180" max="180" step="2" value="0"></label>
+              <label class="field">Roughness <input type="range" id="edRough" min="0" max="1" step="0.02" value="0.75"></label>
+              <label class="field">Metallic <input type="range" id="edMetal" min="0" max="1" step="0.02" value="0"></label>
+              <label class="field">Smooth surface <input type="range" id="edSmooth" min="0" max="20" step="1" value="0"></label>
+            </div>
+            <div class="row-actions">
+              <button class="btn" id="editUndo" type="button">↶ Undo</button>
+              <button class="btn" id="editReset" type="button">Reset sliders</button>
+              <button class="btn primary grow" id="editApply" type="button">Apply changes</button>
+            </div>
+          </div>
+
+          <div class="tab-panel" data-panel="blender">
+            <div class="blender-connect-hint" id="blenderConnectHint">
+              <b>Connect Blender in 3 steps</b>
+              <ol>
+                <li><a class="link" href="/addon.zip" download>Download the add-on</a> → Blender: Edit › Preferences › Add-ons › Install</li>
+                <li>Press <kbd>N</kbd> in the 3D view → <b>WS Import</b> tab</li>
+                <li>Paste this URL and click Connect:</li>
+              </ol>
+              <div class="blender-connect-url-row"><code class="blender-connect-url" id="blenderConnectUrl"></code>
+                <button class="icon-btn" id="blenderCopyBtn" aria-label="Copy URL" title="Copy URL"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div>
+            </div>
+            <div class="row">
+              <select class="select" id="blenderAnim" aria-label="Animation to send"><option value="none">Still (no animation)</option></select>
+              <select class="select" id="blenderSize" aria-label="Size">
+                <option value="0">Keep size</option><option value="10">10 cm</option><option value="30">30 cm</option><option value="100">1 m</option><option value="180">1.8 m</option>
+              </select>
+            </div>
+            <div class="row-actions">
+              <a class="btn" href="/addon.zip" download>⬇ Add-on</a>
+              <button class="btn primary grow" id="blenderSendAnim" type="button">Send to Blender</button>
+            </div>
+          </div>
+
+          <div class="tab-panel" data-panel="export">
+            <div class="export-grid">
+              <button class="export-card" data-export="glb" type="button"><b>GLB</b><span>Blender, web, games</span></button>
+              <button class="export-card" data-export="obj" type="button"><b>OBJ</b><span>Zip with texture</span></button>
+              <button class="export-card" data-export="stl" type="button"><b>STL</b><span>3D printing · 100 mm</span></button>
+              <button class="export-card" data-export="ply" type="button"><b>PLY</b><span>Point/mesh tools</span></button>
+              <button class="export-card" data-export="usdz" type="button"><b>USDZ</b><span>iPhone / Reality Composer</span></button>
+              <button class="export-card" data-export="anim" type="button"><b>Animated GLB</b><span>With the animation picked in Blender tab</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="copy-toast" id="copyToast">Copied to clipboard</div>
+  <div class="task-toast" id="taskToast" style="display:none;"><span id="taskToastText"></span></div>
+  <script type="module" src="point-cloud-loader.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Play</title>
+  <meta name="theme-color" content="#07070a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="theme.css">
+  <script type="importmap">
+    { "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/"
+    }}
+  </script>
+  <style>
+    html, body { height: 100%; overflow: hidden; background: var(--bg); }
+    #camFeed { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; display: none; z-index: 0; }
+    #camFeed.mirror { transform: scaleX(-1); }
+    canvas#stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; z-index: 1; }
+    canvas#handCanvas { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; display: none; }
+    #overlay { position: fixed; inset: 0; z-index: 10; pointer-events: none; touch-action: none; }
+    #overlay .ui { pointer-events: auto; }
+    #overlay.xr { pointer-events: auto; }
+
+    .topbar {
+      position: absolute; top: calc(env(safe-area-inset-top) + 12px); left: 12px; right: 12px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .topbar .grow { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+    .title-block { min-width: 0; }
+    .title-block h1 { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .title-block p { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .modes { position: absolute; top: calc(env(safe-area-inset-top) + 64px); left: 50%; transform: translateX(-50%); }
+
+    .hint {
+      position: absolute; top: calc(env(safe-area-inset-top) + 112px); left: 50%; transform: translateX(-50%);
+      max-width: min(560px, calc(100% - 32px)); text-align: center; font-size: 13px; line-height: 1.4;
+      padding: 8px 14px; border-radius: 999px; background: var(--glass); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      border: 1px solid var(--line); color: var(--fg); pointer-events: none; transition: opacity .25s;
+    }
+    .hint:empty { opacity: 0; }
+
+    .dock {
+      position: fixed; right: 12px; top: 50%; transform: translateY(-50%);
+      display: flex; flex-direction: column; gap: 6px; max-height: 62vh; overflow-y: auto; padding: 6px;
+      border-radius: 20px; background: var(--glass); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      border: 1px solid var(--line); scrollbar-width: none;
+    }
+    .dock::-webkit-scrollbar { display: none; }
+    .dock .tool { width: 64px; }
+
+    .leftdock {
+      position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+      display: flex; flex-direction: column; gap: 6px; padding: 6px; border-radius: 20px;
+      background: var(--glass); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid var(--line);
+    }
+    .leftdock .tool { width: 56px; }
+    .sizeval { font-size: 11px; text-align: center; color: var(--muted); padding: 2px 0; }
+
+    .bottom {
+      position: absolute; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 12px);
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
+    }
+    .chat {
+      width: min(640px, 100%); display: flex; flex-direction: column; gap: 8px;
+    }
+    .chat-log { display: flex; flex-direction: column; gap: 6px; max-height: 26vh; overflow-y: auto; padding: 2px; scrollbar-width: none; }
+    .chat-log::-webkit-scrollbar { display: none; }
+    .msg { max-width: 80%; font-size: 14px; line-height: 1.4; padding: 8px 12px; border-radius: 16px; }
+    .msg.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+    .msg.bot { align-self: flex-start; background: var(--glass-strong); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+    .msg.sys { align-self: center; font-size: 12px; color: var(--muted); background: transparent; padding: 2px 8px; }
+    .chat-bar {
+      display: flex; gap: 8px; align-items: center; padding: 6px; border-radius: 999px;
+      background: var(--glass); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid var(--line);
+    }
+    .chat-bar input {
+      flex: 1; min-width: 0; height: 44px; border: 0; outline: 0; background: transparent; color: var(--fg);
+      font: 500 16px var(--font); padding: 0 8px 0 12px;
+    }
+    .mic {
+      width: 52px; height: 52px; border-radius: 50%; border: 0; cursor: pointer; flex-shrink: 0;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; display: grid; place-items: center;
+      box-shadow: 0 6px 24px var(--accent-glow); transition: transform .15s;
+    }
+    .mic svg { width: 22px; height: 22px; }
+    .mic.rec { background: var(--danger); box-shadow: 0 0 0 6px rgba(239,68,68,.25), 0 0 0 14px rgba(239,68,68,.12); animation: pulse 1.2s infinite; }
+    .mic.busy { opacity: .6; }
+    @keyframes pulse { 50% { box-shadow: 0 0 0 10px rgba(239,68,68,.18), 0 0 0 20px rgba(239,68,68,.06); } }
+    .send { width: 44px; height: 44px; }
+
+    .speech {
+      position: fixed; z-index: 9; transform: translate(-50%, -100%); max-width: 260px; pointer-events: none;
+      font-size: 14px; line-height: 1.35; padding: 10px 14px; border-radius: 18px; background: #fff; color: #111;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35); opacity: 0; transition: opacity .2s;
+    }
+    .speech.show { opacity: 1; }
+    .speech::after { content: ""; position: absolute; left: 50%; bottom: -8px; margin-left: -8px; border: 8px solid transparent; border-top-color: #fff; border-bottom: 0; }
+
+    .hud { display: flex; gap: 10px; align-items: center; }
+    .ammo { font: 700 22px var(--font); letter-spacing: .02em; padding: 8px 16px; border-radius: 14px;
+            background: var(--glass); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid var(--line); }
+    .ammo small { font-size: 12px; color: var(--muted); font-weight: 500; margin-left: 4px; }
+    .fire { width: 76px; height: 76px; border-radius: 50%; border: 0; cursor: pointer; font: 700 13px var(--font); color: #fff;
+            background: radial-gradient(circle at 30% 30%, #ff7a59, #ef4444); box-shadow: 0 8px 28px rgba(239,68,68,.45); }
+    .fire:active { transform: scale(.94); }
+    .crosshair { position: fixed; left: 50%; top: 50%; width: 28px; height: 28px; margin: -14px 0 0 -14px; z-index: 8; pointer-events: none; display: none; }
+    .crosshair::before, .crosshair::after { content: ""; position: absolute; background: rgba(255,255,255,.9); box-shadow: 0 0 4px rgba(0,0,0,.6); }
+    .crosshair::before { left: 13px; top: 0; width: 2px; height: 28px; }
+    .crosshair::after { top: 13px; left: 0; height: 2px; width: 28px; }
+    .score { font-size: 13px; color: var(--muted); }
+
+    #loading { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: var(--bg); }
+    #loading .spinner { width: 34px; height: 34px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin 0.9s linear infinite; margin: 0 auto 14px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loading p { color: var(--muted); font-size: 14px; text-align: center; }
+
+    .sheet { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 12px); transform: translateX(-50%);
+             width: min(520px, calc(100% - 24px)); padding: 14px; border-radius: 22px; display: flex; flex-direction: column; gap: 10px;
+             background: var(--glass-strong); backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px); border: 1px solid var(--line); }
+    .sheet h3 { font-size: 14px; font-weight: 600; }
+    .sheet .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .sheet select, .sheet input[type=text] { flex: 1; min-width: 0; }
+    .hidden { display: none !important; }
+
+    .segmented .ico { margin-right: 4px; }
+    .tool { -webkit-user-select: none; user-select: none; touch-action: manipulation; }
+
+    /* ── Phones ── */
+    @media (max-width: 720px) {
+      .topbar { gap: 8px; }
+      .title-block h1 { font-size: 14px; }
+      #roleSeg button { padding: 6px 9px; }
+      #roleSeg button .lbl { display: none; }
+      #roleSeg button.is-active .lbl { display: inline; }
+      #roleSeg .ico { margin-right: 0; }
+      #roleSeg button.is-active .ico { margin-right: 4px; }
+      .modes { top: calc(env(safe-area-inset-top) + 64px); }
+      .modes .segmented button { padding: 7px 12px; font-size: 12px; }
+      .hint { top: calc(env(safe-area-inset-top) + 108px); font-size: 12px; padding: 7px 12px; border-radius: 14px; }
+
+      /* Actions: horizontal, thumb-reachable row just above the chat / fire button */
+      .dock {
+        position: static; transform: none; flex-direction: row; max-height: none; width: 100%;
+        overflow-x: auto; overflow-y: hidden; padding: 6px; border-radius: 18px; gap: 4px;
+        scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch;
+      }
+      .dock .tool { flex: 0 0 62px; width: 62px; scroll-snap-align: start; padding: 7px 2px; }
+
+      /* Transform tools: slim icon column */
+      .leftdock { top: calc(env(safe-area-inset-top) + 150px); transform: none; padding: 4px; gap: 2px; border-radius: 16px; }
+      .leftdock .tool { width: 44px; font-size: 0; gap: 0; padding: 9px 0; border-radius: 12px; }
+      .leftdock .tool span { font-size: 18px; }
+      .sizeval { font-size: 10px; padding: 0; }
+
+      .chat-log { max-height: 20vh; }
+      .msg { font-size: 13px; padding: 7px 11px; }
+      .chat-bar input { height: 42px; font-size: 16px; }
+      .mic { width: 48px; height: 48px; }
+      .fire { width: 70px; height: 70px; }
+      .ammo { font-size: 18px; padding: 6px 12px; }
+      .speech { max-width: 220px; font-size: 13px; }
+    }
+  </style>
+</head>
+<body>
+  <video id="camFeed" playsinline muted autoplay></video>
+  <canvas id="stage"></canvas>
+  <canvas id="handCanvas"></canvas>
+  <div class="crosshair" id="crosshair"></div>
+  <div class="speech" id="speech"></div>
+
+  <div id="loading"><div><div class="spinner"></div><p id="loadingText">Loading your model…</p></div></div>
+
+  <div id="overlay">
+    <div class="topbar ui">
+      <a class="icon-btn" id="backBtn" href="/" aria-label="Back">
+        <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+      </a>
+      <div class="grow">
+        <div class="title-block"><h1 id="title">Scan</h1><p id="subtitle"></p></div>
+      </div>
+      <div class="segmented small" id="roleSeg" role="group" aria-label="What is it?">
+        <button data-role="character" type="button" title="Character"><span class="ico">🧸</span><span class="lbl">Character</span></button>
+        <button data-role="gun" type="button" title="Gun"><span class="ico">🔫</span><span class="lbl">Gun</span></button>
+        <button data-role="object" type="button" title="Object"><span class="ico">📦</span><span class="lbl">Object</span></button>
+      </div>
+    </div>
+
+    <div class="modes ui">
+      <div class="segmented" id="modeSeg" role="group" aria-label="View">
+        <button data-mode="3d" type="button">3D</button>
+        <button data-mode="hand" type="button">✋ Hands</button>
+        <button data-mode="room" type="button" id="roomModeBtn">Room AR</button>
+        <button data-mode="quicklook" type="button" id="qlModeBtn">iPhone AR</button>
+      </div>
+    </div>
+
+    <div class="hint" id="hint"></div>
+
+    <!-- Left: transform tools -->
+    <div class="leftdock ui" id="leftDock">
+      <button class="tool" id="toolRotate" type="button" title="Drag rotates the model (360°)"><span>⟳</span>Rotate</button>
+      <button class="tool" id="toolMove" type="button" title="Drag moves / throws the model"><span>✥</span>Move</button>
+      <button class="tool" id="tool360" type="button" title="Spin a full 360°"><span>↻</span>360°</button>
+      <button class="tool" id="toolTurntable" type="button" title="Keep spinning"><span>◎</span>Turntable</button>
+      <button class="tool" id="toolUpright" type="button" title="Reset rotation"><span>⤒</span>Reset</button>
+      <button class="tool" id="toolBigger" type="button"><span>＋</span>Bigger</button>
+      <div class="sizeval" id="sizeVal">30 cm</div>
+      <button class="tool" id="toolSmaller" type="button"><span>－</span>Smaller</button>
+    </div>
+
+    <!-- Bottom -->
+    <div class="bottom ui" id="bottom">
+      <!-- Actions for the current role (right rail on desktop, scroll row on phones) -->
+      <div class="dock" id="dock"></div>
+      <div class="chat hidden" id="chat">
+        <div class="chat-log" id="chatLog"></div>
+        <form class="chat-bar" id="chatForm" autocomplete="off">
+          <input id="chatInput" type="text" placeholder="Say something…" maxlength="400">
+          <button class="icon-btn send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+          <button class="mic" id="micBtn" type="button" aria-label="Talk">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+          </button>
+        </form>
+      </div>
+      <div class="hud hidden" id="gunHud">
+        <div class="ammo"><span id="ammo">12</span><small>/ 12</small></div>
+        <button class="fire" id="fireBtn" type="button">FIRE</button>
+        <div class="score" id="score">Targets hit: 0</div>
+      </div>
+    </div>
+
+    <!-- iPhone Quick Look sheet -->
+    <div class="sheet ui hidden" id="qlSheet">
+      <h3>See it in your room (AR Quick Look)</h3>
+      <div class="row">
+        <select class="select" id="qlAnim" aria-label="Animation"></select>
+        <a class="btn primary ql" id="quickLook" rel="ar" href="#"><img alt="" width="1" height="1" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></a>
+      </div>
+      <p class="muted" id="qlStatus">Drag to move · pinch to resize · twist to rotate</p>
+    </div>
+  </div>
+
+  <script type="module" src="play.js"></script>
+</body>
+</html>

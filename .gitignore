@@ -1,0 +1,29 @@
+# Environment
+.env
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+
+# Local data
+scans/
+certs/
+
+vendor/Hunyuan3D-2/
+models/
+
+# Blender add-on bytecode
+blender_addon/__pycache__/
