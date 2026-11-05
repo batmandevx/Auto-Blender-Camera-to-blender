@@ -15,6 +15,7 @@ Everything runs **on your own Mac**. There are no API keys, no cloud, no credits
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 <img src="docs/images/example-gun-4view.jpg" width="820" alt="Four photos of a toy blaster turned into a textured 3D model">
+<img width="1280" height="256" alt="image" src="https://github.com/user-attachments/assets/952dcb99-142f-4733-aee1-50fbd7814c8d" />
 
 </div>
 
